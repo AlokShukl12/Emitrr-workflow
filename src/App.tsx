@@ -1,76 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import NodeView from './components/NodeView'
+import { cloneNodes, createNode, ensureBranchEdges, findParent } from './utils/workflow'
+import type { MenuTarget, NodeType, WorkflowNode } from './types'
 import './App.css'
 
-type NodeType = 'action' | 'branch' | 'end'
-
-type Edge = {
-  id?: string
-  label: string
-}
-
-type WorkflowNode = {
-  id: string
-  label: string
-  type: NodeType
-  children: Edge[]
-}
-
-const BRANCH_BASE = ['True', 'False']
-
 const STORAGE_KEY = 'workflow-builder-state'
-
-const cloneNodes = (map: Record<string, WorkflowNode>) => {
-  const result: Record<string, WorkflowNode> = {}
-  Object.values(map).forEach((node) => {
-    result[node.id] = {
-      ...node,
-      children: node.children.map((edge) => ({ ...edge })),
-    }
-  })
-  return result
-}
-
-const ensureBranchEdges = (children: Edge[] = []) => {
-  const edges = [...children]
-  BRANCH_BASE.forEach((label) => {
-    if (!edges.some((edge) => edge.label === label)) {
-      edges.push({ label })
-    }
-  })
-  return edges
-}
-
-const createNode = (id: string, type: NodeType): WorkflowNode => {
-  if (type === 'branch') {
-    return { id, label: 'Branch', type, children: ensureBranchEdges([]) }
-  }
-  if (type === 'end') {
-    return { id, label: 'End', type, children: [] }
-  }
-  return { id, label: 'Action', type, children: [] }
-}
-
-type ParentMatch = { parentId: string; edgeIndex: number }
-type MenuTarget = { parentId: string; label: string | null }
-
-const findParent = (
-  currentId: string,
-  targetId: string,
-  map: Record<string, WorkflowNode>
-): ParentMatch | null => {
-  const node = map[currentId]
-  if (!node) return null
-
-  for (let i = 0; i < node.children.length; i += 1) {
-    const childId = node.children[i].id
-    if (childId === targetId) return { parentId: currentId, edgeIndex: i }
-    if (childId) {
-      const nested = findParent(childId, targetId, map)
-      if (nested) return nested
-    }
-  }
-  return null
-}
 
 function App() {
   const rootId = useMemo(() => 'node-0', [])
@@ -321,118 +255,6 @@ function App() {
     }, true)
   }
 
-  type NodeViewProps = { nodeId: string; incomingLabel?: string }
-
-  const NodeView = ({ nodeId, incomingLabel }: NodeViewProps) => {
-    const node = nodes[nodeId]
-    if (!node) return null
-
-    const edges =
-      node.type === 'branch'
-        ? ensureBranchEdges(node.children)
-        : node.type === 'action'
-          ? node.children.length
-            ? node.children
-            : [{ label: 'Next' }]
-          : []
-
-    const openMenu = (label: string | null) => {
-      setMenuTarget((prev) => {
-        if (prev && prev.parentId === nodeId && prev.label === label) return null
-        return { parentId: nodeId, label }
-      })
-    }
-
-    const isMenuOpen = (label: string | null) =>
-      menuTarget?.parentId === nodeId && menuTarget.label === label
-
-    const handleInsert = (label: string | null, type: NodeType) => {
-      addNode(nodeId, node.type === 'branch' ? label : null, type)
-      setMenuTarget(null)
-    }
-
-    return (
-      <div className="node-wrapper">
-        {incomingLabel ? <div className="incoming">{incomingLabel}</div> : null}
-        <div className={`node-card ${node.type}`}>
-          <div className="node-top">
-            <span className="badge">
-              {node.type === 'action'
-                ? 'Action'
-                : node.type === 'branch'
-                  ? 'Branch'
-                  : 'End'}
-            </span>
-            <input
-              className="node-input"
-              value={node.label}
-              onChange={(event) => updateLabel(nodeId, event.target.value)}
-            />
-          </div>
-          <div className="node-tools">
-            {node.type === 'branch' ? (
-              <button className="ghost" onClick={() => addBranchPath(nodeId)}>
-                + Add branch path
-              </button>
-            ) : null}
-            {nodeId !== rootId ? (
-              <button className="ghost danger" onClick={() => deleteNode(nodeId)}>
-                Delete node
-              </button>
-            ) : null}
-          </div>
-        </div>
-
-        {edges.length ? (
-          <div className="children">
-            {edges.map((edge, index) => (
-              <div className="child-row" key={`${edge.label}-${index}`}>
-                <div className="edge-label">{edge.label}</div>
-                <div className="edge-actions">
-                  <button
-                    className={`connector ${isMenuOpen(node.type === 'branch' ? edge.label : null) ? 'active' : ''}`}
-                    onClick={() => openMenu(node.type === 'branch' ? edge.label : null)}
-                  >
-                    <span className="connector-dot" />
-                    <span>{edge.id ? 'Insert step' : 'Add step'}</span>
-                  </button>
-
-                  {isMenuOpen(node.type === 'branch' ? edge.label : null) ? (
-                    <div className="popover" onClick={(event) => event.stopPropagation()}>
-                      <p className="popover-title">Choose node type</p>
-                      <div className="action-buttons">
-                        <button onClick={() => handleInsert(edge.label, 'action')}>Action</button>
-                        <button onClick={() => handleInsert(edge.label, 'branch')}>Branch</button>
-                        <button onClick={() => handleInsert(edge.label, 'end')}>End</button>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-
-                {edge.id ? (
-                  <NodeView nodeId={edge.id} incomingLabel={edge.label} />
-                ) : (
-                  <div className="empty-slot">
-                    <div className="slot-indicator">
-                      <button
-                        className={`connector subtle ${isMenuOpen(node.type === 'branch' ? edge.label : null) ? 'active' : ''}`}
-                        onClick={() => openMenu(node.type === 'branch' ? edge.label : null)}
-                      >
-                        <span className="connector-dot" />
-                        <span>New step</span>
-                      </button>
-                    </div>
-                    <p className="muted">No step yet</p>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        ) : null}
-      </div>
-    )
-  }
-
   return (
     <div className="app-shell">
       <header className="header">
@@ -467,9 +289,18 @@ function App() {
           </div>
         </div>
       </header>
-
       <main className="canvas">
-        <NodeView nodeId={rootId} />
+        <NodeView
+          nodeId={rootId}
+          nodes={nodes}
+          rootId={rootId}
+          menuTarget={menuTarget}
+          setMenuTarget={setMenuTarget}
+          addNode={addNode}
+          deleteNode={deleteNode}
+          updateLabel={updateLabel}
+          addBranchPath={addBranchPath}
+        />
       </main>
     </div>
   )
